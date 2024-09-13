@@ -8,7 +8,7 @@
 
 #include <stdio.h>
 
-#define FPS 60
+#define FPS 25
 
 int ClientMain(SOCKET &socket);
 int ServerMain(SOCKET &socket);
@@ -84,24 +84,61 @@ int main(void)
 	return ret;
 }
 
+
+struct SendInfo
+{
+	BITMAPINFO *pBitmap;
+	DWORD dwBitmapInfoSize;
+};
+
+struct SendThreadParam
+{
+	bool bLoop;
+	SOCKET socket;
+	Thread_Queue<SendInfo, 2> tQueue;//最多缓存2帧
+};
+
+
+DWORD WINAPI SendThreadProc(LPVOID lpParameter)
+{
+	SendThreadParam &param = *(SendThreadParam *)lpParameter;
+	SendInfo info;
+
+	while (param.bLoop)
+	{
+		if (!param.tQueue.pop(info))
+		{
+			Sleep(0);//放弃剩余时间片
+			continue;
+		}
+
+		//不管有没有成功都按成功来算
+		Send_Screen(param.socket, info.pBitmap, info.dwBitmapInfoSize);
+		//发送完毕释放内存
+		free(info.pBitmap);
+	}
+
+	return 0;
+}
+
+
 void CALLBACK CaptureScreen(UINT uTimerID, UINT Reserved0, DWORD_PTR dwUser, DWORD_PTR Reserved1, DWORD_PTR Reserved2)
 {
-	HWND hwDesktop = GetDesktopWindow();
-	HDC dcDesktop = GetDC(hwDesktop);
+	HDC dcScreen = GetDC(NULL);//获取屏幕DC
+	//获取屏幕宽高
+	int iScreenWidt = GetDeviceCaps(dcScreen, DESKTOPHORZRES);
+	int iScreenHigh = GetDeviceCaps(dcScreen, DESKTOPVERTRES);
 
 	//创建兼容DC
-	HDC dcComp = CreateCompatibleDC(dcDesktop);
-	//获取兼容DC宽高
-	int iCompWidt = GetDeviceCaps(dcComp, HORZRES);
-	int iCompHigh = GetDeviceCaps(dcComp, VERTRES);
+	HDC dcComp = CreateCompatibleDC(dcScreen);
 
 	//创建兼容位图
-	HBITMAP bmpComp = CreateCompatibleBitmap(dcDesktop, iCompWidt, iCompHigh);
+	HBITMAP bmpComp = CreateCompatibleBitmap(dcScreen, iScreenWidt, iScreenHigh);
 	//位图选入DC
 	SelectObject(dcComp, bmpComp);
 
 	//截图到兼容DC内
-	BitBlt(dcComp, 0, 0, iCompWidt, iCompHigh, dcDesktop, 0, 0, SRCCOPY);
+	BitBlt(dcComp, 0, 0, iScreenWidt, iScreenHigh, dcScreen, 0, 0, SRCCOPY);
 
 
 	//获取位图信息
@@ -131,13 +168,15 @@ void CALLBACK CaptureScreen(UINT uTimerID, UINT Reserved0, DWORD_PTR dwUser, DWO
 
 	//转换到DIB设备无关位图
 	uint8_t *pData = (uint8_t *)pBitmapInfo;
-	GetDIBits(dcDesktop, bmpComp, 0, bitmap.bmHeight, &pData[sizeof(BitmapHeader) + dwPaletteSize], pBitmapInfo, DIB_RGB_COLORS);
+	GetDIBits(dcScreen, bmpComp, 0, bitmap.bmHeight, &pData[sizeof(BitmapHeader) + dwPaletteSize], pBitmapInfo, DIB_RGB_COLORS);
 
 	//发送DIB
-	Send_Screen(*(SOCKET *)dwUser, pBitmapInfo, dwBitmapInfoSize);
-
-	//释放
-	free(pBitmapInfo);
+	SendThreadParam &param = *(SendThreadParam *)dwUser;
+	if (!param.tQueue.push(SendInfo{ pBitmapInfo, dwBitmapInfoSize }))
+	{
+		//压入失败，缓存已满，直接丢弃
+		free(pBitmapInfo);
+	}
 
 	//删除DDB位图
 	DeleteObject(bmpComp);
@@ -145,17 +184,30 @@ void CALLBACK CaptureScreen(UINT uTimerID, UINT Reserved0, DWORD_PTR dwUser, DWO
 	DeleteObject(dcComp);
 
 	//释放桌面DC
-	ReleaseDC(hwDesktop, dcDesktop);
+	ReleaseDC(NULL, dcScreen);
 }
 
 int ClientMain(SOCKET &socket)
 {
-	timeSetEvent(1000 / FPS, 0, CaptureScreen, (DWORD_PTR)&socket, TIME_PERIODIC | TIME_CALLBACK_FUNCTION);
-	Sleep(INFINITE);
+	SendThreadParam param;
+	param.bLoop = true;
+	param.socket = socket;
+
+	//HANDLE hThread = CreateThread(NULL, 0, SendThreadProc, &param, 0, NULL);
+	//CloseHandle(hThread);//不使用该句柄，关闭以避免内存泄漏
+
+	//设置截图定时循环，该循环会在新的线程中运行
+	timeSetEvent(1000 / FPS, 0, CaptureScreen, (DWORD_PTR)&param, TIME_PERIODIC | TIME_CALLBACK_FUNCTION);
+
+	//不创建新线程了，把当前线程利用起来
+	return SendThreadProc((LPVOID)&param);
+
+	//无限挂起
+	//Sleep(INFINITE);
 	return 0;
 }
 
-struct ThreadParam
+struct RecvThreadParam
 {
 	bool bLoop;
 	SOCKET socket;
@@ -164,9 +216,9 @@ struct ThreadParam
 };
 
 
-DWORD WINAPI ThreadProc(LPVOID lpParameter)
+DWORD WINAPI RecvThreadProc(LPVOID lpParameter)
 {
-	ThreadParam &param = *(ThreadParam *)lpParameter;
+	RecvThreadParam &param = *(RecvThreadParam *)lpParameter;
 	BITMAPINFO *pBitmapInfo;
 
 	while (param.bLoop)
@@ -191,7 +243,7 @@ DWORD WINAPI ThreadProc(LPVOID lpParameter)
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
 	static BITMAPINFO *pBitmapInfo;
-	static ThreadParam param;
+	static RecvThreadParam param;
 	static HANDLE hThread;
 	switch (message)
 	{
@@ -203,7 +255,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 			param.hWnd = hWnd;
 			Recv_Screen(param.socket, pBitmapInfo);
 
-			hThread = CreateThread(NULL, 0, ThreadProc, &param, 0, NULL);
+			hThread = CreateThread(NULL, 0, RecvThreadProc, &param, 0, NULL);
 		}
 		break;
 	case WM_PAINT:

@@ -58,13 +58,15 @@ int main(void)
 
 	//链接成功
 
-
-
-	int ret = -1;
-
+	//清理缓冲区
+	while (getchar() != '\n')
+	{
+		continue;
+	}
 	printf("Share/Watch? (S/W):");
 	choose = getchar();
 
+	int ret = -1;
 	if (choose == 's' || choose == 'S')
 	{
 		ret = Share(socket);

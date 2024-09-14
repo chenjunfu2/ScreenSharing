@@ -36,4 +36,3 @@ bool Client(SOCKET& sockClient, char* szIPAddress, int& szIPAnum)
 
 	return true;
 }
-

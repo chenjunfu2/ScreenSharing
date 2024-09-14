@@ -15,7 +15,7 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="ScreenSharing.cpp">
+    <ClCompile Include="Main.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>
@@ -36,6 +36,12 @@
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="CaptureAnImage.hpp">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Share.hpp">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Watch.hpp">
       <Filter>头文件</Filter>
     </ClInclude>
   </ItemGroup>

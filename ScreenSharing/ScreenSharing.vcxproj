@@ -153,15 +153,17 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="ScreenSharing.cpp" />
+    <ClCompile Include="Main.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="CaptureAnImage.hpp" />
     <ClInclude Include="Client.hpp" />
     <ClInclude Include="Send_Recv_Screen.hpp" />
     <ClInclude Include="Server.hpp" />
+    <ClInclude Include="Share.hpp" />
     <ClInclude Include="Socket.hpp" />
     <ClInclude Include="Thread_Queue.hpp" />
+    <ClInclude Include="Watch.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

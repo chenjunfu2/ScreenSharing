@@ -95,6 +95,7 @@ struct SendThreadParam
 {
 	bool bLoop;
 	SOCKET socket;
+	HANDLE hEvent;
 	Thread_Queue<SendInfo, 2> tQueue;//最多缓存2帧
 };
 
@@ -106,9 +107,9 @@ DWORD WINAPI SendThreadProc(LPVOID lpParameter)
 
 	while (param.bLoop)
 	{
-		if (!param.tQueue.pop(info))
+		if (!param.tQueue.pop(info))//队列为空则无限等待事件对象直到触发
 		{
-			Sleep(0);//放弃剩余时间片
+			WaitForSingleObject(param.hEvent, INFINITE);
 			continue;
 		}
 
@@ -178,6 +179,9 @@ void CALLBACK CaptureScreen(UINT uTimerID, UINT Reserved0, DWORD_PTR dwUser, DWO
 		free(pBitmapInfo);
 	}
 
+	//成功，触发事件对象，通知线程退出等待开始发送数据
+	SetEvent(param.hEvent);
+
 	//删除DDB位图
 	DeleteObject(bmpComp);
 	//删除兼容DC
@@ -192,6 +196,7 @@ int ClientMain(SOCKET &socket)
 	SendThreadParam param;
 	param.bLoop = true;
 	param.socket = socket;
+	param.hEvent = CreateEventW(NULL, false, false, NULL);//自动复位，默认未开启
 
 	//HANDLE hThread = CreateThread(NULL, 0, SendThreadProc, &param, 0, NULL);
 	//CloseHandle(hThread);//不使用该句柄，关闭以避免内存泄漏
@@ -206,6 +211,15 @@ int ClientMain(SOCKET &socket)
 	//Sleep(INFINITE);
 	return 0;
 }
+
+
+void SaveToFile(const BITMAPINFO *pBitmap, DWORD dwBitmapInfoSize)
+{
+	//保存建议使用非阻塞重叠IO
+	//overlapped IO
+	return;
+}
+
 
 struct RecvThreadParam
 {
@@ -223,11 +237,16 @@ DWORD WINAPI RecvThreadProc(LPVOID lpParameter)
 
 	while (param.bLoop)
 	{
-		if (Recv_Screen(param.socket, pBitmapInfo) != 0)
+		DWORD dwBitmapInfoSize;
+		if (Recv_Screen(param.socket, pBitmapInfo, &dwBitmapInfoSize) != 0)//该调用为阻塞调用，直到完全成功或失败才返回
 		{
-			continue;
+			continue;//失败重试
 		}
 
+		//保存到磁盘
+		//SaveToFile(pBitmapInfo, dwBitmapInfoSize);
+
+		//放入队列
 		if (!param.tQueue.push(std::move(pBitmapInfo)))
 		{
 			//满了，直接丢弃
@@ -242,7 +261,7 @@ DWORD WINAPI RecvThreadProc(LPVOID lpParameter)
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
-	static BITMAPINFO *pBitmapInfo;
+	static BITMAPINFO *pBitmapInfo = NULL;
 	static RecvThreadParam param;
 	static HANDLE hThread;
 	switch (message)
@@ -253,7 +272,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 			param.bLoop = true;
 			param.socket = *(SOCKET *)((CREATESTRUCT *)lParam)->lpCreateParams;
 			param.hWnd = hWnd;
-			Recv_Screen(param.socket, pBitmapInfo);
 
 			hThread = CreateThread(NULL, 0, RecvThreadProc, &param, 0, NULL);
 		}
@@ -271,6 +289,14 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 					free(old);
 				}
 			}
+
+			if (pBitmapInfo == NULL)//为NULL说明第一帧还未接收到
+			{
+				//直接结束绘制返回
+				EndPaint(hWnd, &ps);
+				break;
+			}
+
 
 			//创建兼容DC
 			HDC dcComp = CreateCompatibleDC(hdc);

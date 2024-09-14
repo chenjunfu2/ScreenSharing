@@ -93,10 +93,15 @@ int Send_Screen(SOCKET &socket, BITMAPINFO *pBitmap, DWORD dwBitmapInfoSize)
 	return 0;
 }
 
-int Recv_Screen(SOCKET &socket, BITMAPINFO *&pBitmap)
+int Recv_Screen(SOCKET &socket, BITMAPINFO *&pBitmap, DWORD *pdwBitmapInfoSize = NULL)
 {
 	Pack_Head ph;
 	DWORD dwBitmapInfoSize;
+
+	if (pdwBitmapInfoSize != NULL)
+	{
+		*pdwBitmapInfoSize = 0;
+	}
 
 	//接收一个封包
 	MyRecv(socket, (char *)&ph, sizeof(Pack_Head));
@@ -144,6 +149,11 @@ int Recv_Screen(SOCKET &socket, BITMAPINFO *&pBitmap)
 		dwIndex += ph.data_size;
 
 	} while (ph.flags != -1);
+
+	if (pdwBitmapInfoSize != NULL)
+	{
+		*pdwBitmapInfoSize = dwBitmapInfoSize;
+	}
 
 	return 0;
 }
